@@ -1,43 +1,43 @@
-"""LangGraph orchestrator that coordinates all specialist agents."""
+"""Orchestrator coordinates all specialist agents.
+Phase 1: only Financial Agent is wired up. Other phases will add the rest.
+"""
 import asyncio
-from typing import Any
 
 from app.agents.financial_agent import FinancialAgent
-from app.agents.commercial_agent import CommercialAgent
-from app.agents.risk_agent import RiskAgent
-from app.agents.governance_agent import GovernanceAgent
-from app.agents.market_agent import MarketAgent
-from app.agents.sentiment_agent import SentimentAgent
-from app.agents.red_flag_agent import RedFlagAgent
-from app.agents.synthesis_agent import SynthesisAgent
 from app.services.sec_edgar import fetch_company_filings
-from app.models.analysis import AnalysisResult
+from app.models.analysis import AnalysisResult, FinancialData
 from app.utils.logger import logger
 
 
 async def run_full_analysis(ticker: str) -> AnalysisResult:
-    """Master pipeline: fetch filings → run agents in parallel → synthesize."""
+    """Master pipeline. Returns an AnalysisResult populated with whatever phase has built."""
+    ticker = ticker.upper()
     logger.info(f"🎯 Starting analysis for {ticker}")
 
     # Step 1: Fetch all filings
     filings = await fetch_company_filings(ticker)
 
-    # Step 2: Spin up all specialist agents in parallel
-    agents = [
-        FinancialAgent(ticker, filings),
-        CommercialAgent(ticker, filings),
-        RiskAgent(ticker, filings),
-        GovernanceAgent(ticker, filings),
-        MarketAgent(ticker, filings),
-        SentimentAgent(ticker, filings),
-    ]
-    results = await asyncio.gather(*[a.run() for a in agents])
-    findings = {a.name: r for a, r in zip(agents, results)}
+    # Step 2: Run agents (Phase 1 = just Financial)
+    financial_result = await FinancialAgent(ticker, filings).run()
 
-    # Step 3: Red flag cross-check
-    red_flags = await RedFlagAgent(ticker, filings).cross_check(findings)
+    # Build response
+    financial = None
+    if financial_result.get("status") == "ok" and financial_result.get("data"):
+        try:
+            financial = FinancialData(**financial_result["data"])
+        except Exception as e:
+            logger.warning(f"Could not parse FinancialData: {e}")
 
-    # Step 4: Synthesize into final IC memo + score
-    synthesis = await SynthesisAgent(ticker, filings).synthesize(findings, red_flags)
-
-    return AnalysisResult(**synthesis)
+    return AnalysisResult(
+        ticker=ticker,
+        company_name=filings.get("company_name", ticker),
+        cik=filings.get("cik", ""),
+        filings_summary={
+            "10K": len(filings.get("10K", [])),
+            "10Q": len(filings.get("10Q", [])),
+            "8K": len(filings.get("8K", [])),
+            "DEF14A": len(filings.get("DEF14A", [])),
+        },
+        financial=financial,
+        raw_findings={"financial_agent": financial_result},
+    )
