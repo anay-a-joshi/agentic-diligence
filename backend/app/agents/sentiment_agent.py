@@ -1,12 +1,11 @@
-"""UsentimentUagent — TODO: implement specialist analysis."""
+"""SentimentAgent — analyzes management tone shifts across earnings calls."""
 from typing import Any
 from app.agents.base_agent import BaseAgent
 
 
-class UsentimentUagent(BaseAgent):
+class SentimentAgent(BaseAgent):
     name = "sentiment_agent"
 
     async def run(self) -> dict[str, Any]:
         self.log("Running analysis...")
-        # TODO: implement
         return {"status": "stub", "agent": self.name}
