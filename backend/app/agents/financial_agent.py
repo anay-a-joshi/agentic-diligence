@@ -1,4 +1,4 @@
-"""FinancialAgent — extracts financial drivers from SEC filings using Gemini."""
+"""FinancialAgent — extracts financial drivers from SEC filings using Groq Llama."""
 from typing import Any
 
 from app.agents.base_agent import BaseAgent
@@ -26,21 +26,18 @@ Return ONLY a JSON object with this exact shape:
   "shares_outstanding_millions": 15116,
   "revenue_growth_yoy_pct": 2.0,
   "ebitda_margin_pct": 33.2,
-  "key_drivers": ["Services revenue growth", "iPhone unit pricing", "Margin expansion in Services"],
+  "key_drivers": ["Services revenue growth", "iPhone unit pricing"],
   "key_risks": ["China demand softness", "Regulatory pressure on App Store"],
-  "non_recurring_items": ["$1.2B litigation reserve in Q3"],
+  "non_recurring_items": ["1.2B litigation reserve in Q3"],
   "summary": "A 2-3 sentence summary of financial health and trajectory."
 }}
 
-Use null for any value you cannot determine from the filing.
-Numbers should be in USD millions (revenue of $391B = 391035).
+Use null for any value you cannot determine. Numbers in USD millions.
 
-10-K filing excerpt:
+10-K excerpt:
 ---
 {filing_text}
----
-
-Respond with ONLY the JSON object, no markdown, no preamble."""
+---"""
 
 
 class FinancialAgent(BaseAgent):
@@ -54,7 +51,8 @@ class FinancialAgent(BaseAgent):
             self.log("No 10-K available — returning empty result")
             return {"status": "no_filing", "data": None}
 
-        filing_text = get_filing_text(filing_obj, max_chars=180_000)
+        # Groq has a 128K context limit; truncate to 70K chars to leave room for prompt + response
+        filing_text = get_filing_text(filing_obj, max_chars=70_000)
         if not filing_text:
             self.log("Could not extract filing text")
             return {"status": "no_text", "data": None}

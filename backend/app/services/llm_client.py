@@ -1,35 +1,56 @@
-"""Wraps Google Gemini client with retry + telemetry."""
-from google import genai
-from google.genai import types
-from tenacity import retry, stop_after_attempt, wait_exponential
+"""Wraps Groq client (Llama 3.3 70B) with retry + JSON parsing helpers."""
+import asyncio
+import json
+from groq import AsyncGroq
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.config import settings
 from app.utils.logger import logger
 
 
-# Gemini model tiers — Flash is fast/free, Pro is higher quality
-MODEL_FLASH = "gemini-2.0-flash-exp"   # use for cheap, fast agent calls
-MODEL_PRO = "gemini-1.5-pro"           # use for synthesis & long-context work
+# Groq model tiers — both free, both fast
+MODEL_FLASH = "llama-3.3-70b-versatile"  # main workhorse: smart and free
+MODEL_PRO = "llama-3.3-70b-versatile"    # same on free tier; could switch to a bigger paid model later
+
+# Approx context window: 128K tokens. To stay safe, cap user content at ~80K chars
+# (rough conversion: 4 chars per token => 80K chars ≈ 20K tokens).
+MAX_INPUT_CHARS = 80_000
 
 
-_client: genai.Client | None = None
+_client: AsyncGroq | None = None
+_lock = asyncio.Lock()
 
 
-def get_client() -> genai.Client:
-    """Lazy singleton — created on first use so missing keys don't crash startup."""
+def get_client() -> AsyncGroq:
+    """Lazy singleton."""
     global _client
     if _client is None:
-        if not settings.gemini_api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set. Add it to backend/.env"
-            )
-        _client = genai.Client(api_key=settings.gemini_api_key)
+        if not settings.groq_api_key:
+            raise RuntimeError("GROQ_API_KEY is not set. Add it to backend/.env")
+        _client = AsyncGroq(api_key=settings.groq_api_key)
     return _client
+
+
+# Free tier rate limit on Llama 3.3 70B is roughly 30 RPM.
+# We serialize calls with a small delay to stay safely under this.
+_MIN_INTERVAL_SECONDS = 2.5
+_last_call_time: float = 0.0
+
+
+async def _throttle():
+    """Ensure we don't hammer Groq's free-tier rate limit."""
+    global _last_call_time
+    async with _lock:
+        now = asyncio.get_event_loop().time()
+        elapsed = now - _last_call_time
+        if elapsed < _MIN_INTERVAL_SECONDS:
+            await asyncio.sleep(_MIN_INTERVAL_SECONDS - elapsed)
+        _last_call_time = asyncio.get_event_loop().time()
 
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
+    wait=wait_exponential(multiplier=2, min=4, max=20),
     reraise=True,
 )
 async def call_llm(
@@ -39,47 +60,63 @@ async def call_llm(
     max_tokens: int = 4096,
     temperature: float = 0.2,
 ) -> str:
-    """
-    Send a prompt to Gemini and return the text response.
+    """Send a prompt to Groq's Llama and return the text response."""
+    await _throttle()
 
-    Args:
-        prompt: User-facing prompt content
-        system: System instruction (optional)
-        model: Gemini model identifier — defaults to fast/free Flash
-        max_tokens: Output cap
-        temperature: 0.0 = deterministic, 1.0 = creative
-    """
+    # Truncate user content to stay within context window
+    if len(prompt) > MAX_INPUT_CHARS:
+        logger.warning(f"Truncating prompt from {len(prompt)} to {MAX_INPUT_CHARS} chars")
+        prompt = prompt[:MAX_INPUT_CHARS]
+
     client = get_client()
 
-    config = types.GenerateContentConfig(
-        max_output_tokens=max_tokens,
-        temperature=temperature,
-    )
+    messages = []
     if system:
-        config.system_instruction = system
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
 
     try:
-        response = await client.aio.models.generate_content(
+        response = await client.chat.completions.create(
             model=model,
-            contents=prompt,
-            config=config,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
-        return response.text or ""
+        return response.choices[0].message.content or ""
     except Exception as e:
-        logger.error(f"Gemini API error: {e}")
+        logger.error(f"Groq API error: {e}")
         raise
 
 
 async def call_llm_json(prompt: str, system: str = "", model: str = MODEL_FLASH) -> dict:
-    """Convenience wrapper that asks Gemini to return JSON and parses it."""
-    import json
+    """Ask the model for JSON and parse it. Uses Groq's native JSON mode."""
+    await _throttle()
 
-    full_prompt = (
-        f"{prompt}\n\n"
-        "Respond with ONLY a valid JSON object. "
-        "No markdown fences, no preamble, no explanation."
+    if len(prompt) > MAX_INPUT_CHARS:
+        logger.warning(f"Truncating prompt from {len(prompt)} to {MAX_INPUT_CHARS} chars")
+        prompt = prompt[:MAX_INPUT_CHARS]
+
+    client = get_client()
+
+    messages = []
+    # Groq's JSON mode requires the word "json" in the system or user prompt
+    if system:
+        messages.append({"role": "system", "content": system + "\n\nAlways respond in JSON format."})
+    else:
+        messages.append({"role": "system", "content": "Always respond in JSON format."})
+    messages.append({"role": "user", "content": prompt})
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=4096,
+        temperature=0.0,
+        response_format={"type": "json_object"},
     )
-    raw = await call_llm(full_prompt, system=system, model=model, temperature=0.0)
-    # Strip code fences if the model included them anyway
-    cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(cleaned)
+    raw = response.choices[0].message.content or "{}"
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Fallback: try to strip code fences if present
+        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(cleaned)

@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # LLM
-    gemini_api_key: str = ""
+    groq_api_key: str = ""
 
     # SEC
     sec_user_agent: str = "DiligenceAI Research contact@example.com"
