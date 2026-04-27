@@ -3,11 +3,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # LLM
-    anthropic_api_key: str = ""
-    openai_api_key: str = ""
+    gemini_api_key: str = ""
 
     # SEC
-    sec_api_key: str = ""
     sec_user_agent: str = "DiligenceAI Research contact@example.com"
 
     # Supabase
