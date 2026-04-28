@@ -8,9 +8,9 @@ from app.utils.logger import logger
 
 
 def _coerce_lists(data: dict) -> dict:
-    """LLMs sometimes return null instead of an empty list. Coerce to [] for list fields."""
+    """LLMs sometimes return null instead of []. Coerce."""
     for field in ("key_drivers", "key_risks", "non_recurring_items"):
-        if field in data and data[field] is None:
+        if data.get(field) is None:
             data[field] = []
     if data.get("summary") is None:
         data["summary"] = ""
@@ -29,10 +29,12 @@ async def run_full_analysis(ticker: str) -> AnalysisResult:
     cik = bundle["cik"]
     filings_summary = bundle["filings_summary"]
 
+    # Make CIK accessible to the agent (it needs it for XBRL)
+    bundle["cik"] = cik
+
     raw_findings: dict[str, Any] = {}
     financial: FinancialData | None = None
 
-    # Phase 1: Financial Agent only. Other 6 agents come in Phase 2.
     fa = FinancialAgent(ticker=ticker, filings=bundle)
     fa_result = await fa.run()
     raw_findings["financial_agent"] = fa_result
