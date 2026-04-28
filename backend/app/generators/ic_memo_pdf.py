@@ -204,7 +204,7 @@ def generate_ic_memo_pdf(
     story.append(metrics_table)
 
     # ------- INVESTMENT THESIS -------
-    story.append(PageBreak())
+    story.append(Spacer(1, 0.2 * inch))
     story.append(Paragraph("Investment Thesis", h2))
     for bullet in synthesis.get("investment_thesis", []) or []:
         story.append(Paragraph(f"• {_safe(bullet)}", bullet_style))
@@ -255,7 +255,7 @@ def generate_ic_memo_pdf(
         ))
 
     # ------- COMMERCIAL DEEP DIVE -------
-    story.append(PageBreak())
+    story.append(Spacer(1, 0.2 * inch))
     story.append(Paragraph("Commercial Diligence", h2))
     if commercial:
         if commercial.get("business_segments"):
@@ -302,7 +302,7 @@ def generate_ic_memo_pdf(
         story.append(Paragraph("Risk factor scoring pending fresh LLM run. Refer to SEC 10-K Item 1A (Risk Factors) for the full risk disclosure.", body_small))
 
     # ------- GOVERNANCE -------
-    story.append(PageBreak())
+    story.append(Spacer(1, 0.2 * inch))
     story.append(Paragraph("Governance Assessment", h2))
     if governance:
         gov_rows = [
@@ -329,6 +329,8 @@ def generate_ic_memo_pdf(
         story.append(gov_table)
         story.append(Spacer(1, 0.1 * inch))
         story.append(Paragraph(_safe(governance.get("summary", "")), body))
+    else:
+        story.append(Paragraph("Governance assessment pending fresh LLM run. Refer to latest DEF 14A proxy statement for board composition, takeover defenses, and ownership structure.", body))
 
     # ------- RED FLAGS -------
     story.append(Spacer(1, 0.1 * inch))
@@ -359,10 +361,10 @@ def generate_ic_memo_pdf(
         ))
         story.append(Paragraph(_safe(sentiment.get("summary", "")), body_small))
     else:
-        story.append(Paragraph("Management tone analysis pending fresh LLM run. Refer to latest 10-K MD&A and earnings call transcripts.", body_small))
+        story.append(Paragraph("Management tone analysis pending fresh LLM run. Refer to latest 10-K MD&amp;A and earnings call transcripts.", body_small))
 
     # ------- FEASIBILITY BREAKDOWN -------
-    story.append(PageBreak())
+    story.append(Spacer(1, 0.2 * inch))
     story.append(Paragraph("Feasibility Score Breakdown", h2))
     components = feasibility.get("components", {}) or {}
     fb_rows = [["Dimension", "Score", "Weight", "Driver"]]
