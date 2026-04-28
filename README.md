@@ -43,3 +43,6 @@ See `docs/architecture.md` for the full architecture writeup.
 
 ## Course
 Final Project — NLP and GenAI in Finance, Georgia Tech QCF
+
+
+![Profile Views](https://komarev.com/ghpvc/?username=anay-a-joshi&color=green)  
