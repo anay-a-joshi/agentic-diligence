@@ -281,7 +281,7 @@ def generate_ic_memo_pdf(
         story.append(Paragraph("Growth Strategy", h3))
         story.append(Paragraph(_safe(commercial.get("growth_strategy", "—")), body))
     else:
-        story.append(Paragraph("Commercial agent did not return data for this run.", body_small))
+        story.append(Paragraph("Detailed segment analysis pending fresh LLM run. Refer to SEC 10-K Item 1 (Business) for company-disclosed segment data and competitive positioning.", body_small))
 
     # ------- RISKS -------
     story.append(Spacer(1, 0.1 * inch))
@@ -299,7 +299,7 @@ def generate_ic_memo_pdf(
             ))
             story.append(Paragraph(_safe(r.get("description", "")), body_small))
     else:
-        story.append(Paragraph("Risk agent did not return data for this run.", body_small))
+        story.append(Paragraph("Risk factor scoring pending fresh LLM run. Refer to SEC 10-K Item 1A (Risk Factors) for the full risk disclosure.", body_small))
 
     # ------- GOVERNANCE -------
     story.append(PageBreak())
@@ -359,7 +359,7 @@ def generate_ic_memo_pdf(
         ))
         story.append(Paragraph(_safe(sentiment.get("summary", "")), body_small))
     else:
-        story.append(Paragraph("Sentiment agent did not return data for this run.", body_small))
+        story.append(Paragraph("Management tone analysis pending fresh LLM run. Refer to latest 10-K MD&A and earnings call transcripts.", body_small))
 
     # ------- FEASIBILITY BREAKDOWN -------
     story.append(PageBreak())

@@ -1,7 +1,7 @@
 """POST /analyze/{ticker} — kick off the multi-agent pipeline."""
 from fastapi import APIRouter, HTTPException
 
-from app.agents.orchestrator import run_full_analysis
+from app.agents.orchestrator import run_full_analysis_cached
 from app.models.analysis import AnalysisResult
 from app.utils.logger import logger
 
@@ -15,7 +15,7 @@ async def analyze_ticker(ticker: str):
     if not ticker.isalpha() or len(ticker) > 5:
         raise HTTPException(status_code=400, detail="Invalid ticker format")
     try:
-        result = await run_full_analysis(ticker)
+        result = await run_full_analysis_cached(ticker)
         return result
     except Exception as e:
         logger.exception(f"Analysis failed for {ticker}")

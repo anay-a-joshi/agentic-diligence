@@ -186,3 +186,29 @@ async def run_full_analysis(ticker: str) -> AnalysisResult:
         lbo_excel_url=f"/export/downloads/{os.path.basename(xlsx_path)}" if xlsx_path else "",
         raw_findings=raw_findings,
     )
+
+
+# ============================================================
+# Cached wrapper — checks cache first, runs full analysis on miss
+# ============================================================
+from app.services.result_cache import load_cached, save_cached
+
+
+async def run_full_analysis_cached(ticker: str) -> AnalysisResult:
+    """Cached wrapper around run_full_analysis.
+
+    Checks file cache first. On hit (within 24h, quality-gated),
+    returns cached result instantly. On miss, runs full pipeline
+    and persists result if quality gate passes (5+/8 agents OK).
+    """
+    cached = load_cached(ticker)
+    if cached is not None:
+        try:
+            logger.info(f"📦 Cache HIT for {ticker} — returning instantly")
+            return AnalysisResult(**cached)
+        except Exception as e:
+            logger.info(f"  Cache deserialize failed: {e} — running fresh")
+
+    result = await run_full_analysis(ticker)
+    save_cached(ticker, result)
+    return result

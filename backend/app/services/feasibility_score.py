@@ -51,7 +51,7 @@ def score_financial_quality(financial: dict | None) -> tuple[int, str]:
 def score_governance(governance: dict | None) -> tuple[int, str]:
     """Lower defenses + cleaner board → easier to take private."""
     if not governance:
-        return 50, "Governance data unavailable"
+        return 50, "Baseline 50/100 - data unavailable, defer to manual DEF 14A review"
 
     score = 60.0
     feasibility = str(governance.get("feasibility_assessment", "")).lower()
@@ -74,7 +74,7 @@ def score_governance(governance: dict | None) -> tuple[int, str]:
 def score_risk_profile(risk: dict | None) -> tuple[int, str]:
     """Fewer high-severity risks → safer LBO."""
     if not risk:
-        return 50, "Risk data unavailable"
+        return 50, "Baseline 50/100 - data unavailable, defer to 10-K Item 1A review"
 
     high = int(_safe_float(risk.get("high_severity_count")))
     if high == 0: score = 90
@@ -89,7 +89,7 @@ def score_risk_profile(risk: dict | None) -> tuple[int, str]:
 def score_red_flags(red_flag: dict | None) -> tuple[int, str]:
     """Critical red flags = deal killers; lots of high = caution."""
     if not red_flag:
-        return 70, "No red-flag scan available"
+        return 70, "Baseline 70/100 - scan unavailable, assumes no material 8-K events"
 
     critical = int(_safe_float(red_flag.get("deal_breakers_count")))
     high = int(_safe_float(red_flag.get("high_concern_count")))
@@ -105,7 +105,7 @@ def score_red_flags(red_flag: dict | None) -> tuple[int, str]:
 def score_sentiment(sentiment: dict | None) -> tuple[int, str]:
     """Confident management is good; defensive = bad."""
     if not sentiment:
-        return 60, "Sentiment data unavailable"
+        return 60, "Baseline 60/100 - data unavailable, defer to MD&A review"
 
     tone = str(sentiment.get("overall_tone", "")).lower()
     shift = str(sentiment.get("yoy_tone_shift", "")).lower()
