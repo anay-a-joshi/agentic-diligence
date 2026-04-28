@@ -1,11 +1,9 @@
 """Pydantic models for analysis output."""
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 
 class FinancialData(BaseModel):
-    """Structured financial data extracted from a 10-K by the FinancialAgent."""
-
     fiscal_year: Optional[int] = None
     revenue_usd_millions: Optional[float] = None
     ebitda_usd_millions: Optional[float] = None
@@ -21,23 +19,23 @@ class FinancialData(BaseModel):
     non_recurring_items: list[str] = Field(default_factory=list)
     summary: str = ""
 
-    class Config:
-        # Coerce null lists to empty lists during parsing
-        extra = "ignore"
-
 
 class AnalysisResult(BaseModel):
-    """Top-level response shape for /analyze/{ticker}."""
-
     ticker: str
     company_name: str
     cik: str
     filings_summary: dict[str, int]
     financial: Optional[FinancialData] = None
-    feasibility_score: Optional[float] = None
+    feasibility_score: Optional[int] = None
+    feasibility_grade: Optional[str] = None
+    feasibility_verdict: Optional[str] = None
+    feasibility_breakdown: dict[str, Any] = Field(default_factory=dict)
     lbo_irr_base: Optional[float] = None
     lbo_irr_bull: Optional[float] = None
     lbo_irr_bear: Optional[float] = None
+    lbo_moic_base: Optional[float] = None
+    lbo_full: dict = Field(default_factory=dict)
+    synthesis: dict = Field(default_factory=dict)
     red_flags: list[str] = Field(default_factory=list)
     ic_memo_url: str = ""
     lbo_excel_url: str = ""

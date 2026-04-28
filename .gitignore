@@ -48,3 +48,7 @@ backend/generated_outputs/
 
 # Supabase
 .supabase/
+backend/.env
+
+# Build/setup scripts (local only)
+*.sh
