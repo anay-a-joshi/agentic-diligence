@@ -7,32 +7,16 @@ from app.utils.logger import logger
 
 
 def _ensure_identity():
-    """edgartools requires identity for SEC compliance."""
     set_identity(settings.sec_user_agent)
 
 
 def fetch_company_filings(ticker: str) -> dict[str, Any]:
-    """Fetch the most recent filings for a public company.
-
-    Returns a dict with:
-      - company_name
-      - cik
-      - filings_summary (counts by form type)
-      - _latest_10k_obj  (edgar Filing object, used by FinancialAgent)
-      - _latest_10q_obj
-      - _latest_def14a_obj
-      - recent_8k_objs (list)
-    """
     _ensure_identity()
-
     try:
         company = Company(ticker)
     except Exception as e:
         logger.error(f"Could not resolve ticker {ticker}: {e}")
         raise
-
-    company_name = company.name
-    cik = str(company.cik)
 
     filings_10k = company.get_filings(form="10-K").head(3)
     filings_10q = company.get_filings(form="10-Q").head(4)
@@ -40,8 +24,8 @@ def fetch_company_filings(ticker: str) -> dict[str, Any]:
     filings_def14a = company.get_filings(form="DEF 14A").head(2)
 
     return {
-        "company_name": company_name,
-        "cik": cik,
+        "company_name": company.name,
+        "cik": str(company.cik),
         "filings_summary": {
             "10K": len(filings_10k),
             "10Q": len(filings_10q),
@@ -55,61 +39,92 @@ def fetch_company_filings(ticker: str) -> dict[str, Any]:
     }
 
 
-def get_filing_text(filing_obj, max_chars: int = 35_000) -> str:
-    """Extract plain text from a filing object, capped at max_chars.
+def _slice_at_marker(text: str, markers: list[str], max_chars: int) -> str:
+    """Find the first marker in text and return max_chars from there."""
+    for marker in markers:
+        idx = text.find(marker)
+        if idx > 0:
+            sliced = text[idx : idx + max_chars]
+            logger.info(f"  Found '{marker}' at offset {idx}, slicing {len(sliced)} chars")
+            return sliced
+    logger.info(f"  No marker found, returning first {max_chars} chars")
+    return text[:max_chars]
 
-    Tries to grab the most financially-dense section first (MD&A or
-    financial statements) before falling back to raw text.
-    """
+
+def _get_full_text(filing_obj) -> str:
     if filing_obj is None:
         return ""
-
-    # Strategy 1: Try to extract specific 10-K items via the Filing.obj() Form10K helper
     try:
-        form_obj = filing_obj.obj()
-        # edgartools Form10K exposes named items
-        # Item 7 = MD&A (revenue discussion), Item 8 = Financial Statements
-        for item_name in ["Item 7", "Item 7A", "Item 8"]:
-            try:
-                item_text = getattr(form_obj, item_name.replace(" ", "_").lower(), None)
-                if item_text:
-                    text = str(item_text)
-                    if len(text) > 1000:  # sanity check
-                        logger.info(f"  Got {item_name} via Form10K helper ({len(text)} chars)")
-                        return text[:max_chars]
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Strategy 2: Search raw text for MD&A heading and slice from there
-    try:
-        full_text = filing_obj.text() if hasattr(filing_obj, "text") else str(filing_obj)
+        return filing_obj.text() if hasattr(filing_obj, "text") else str(filing_obj)
     except Exception as e:
         logger.warning(f"  Could not get filing text: {e}")
         return ""
 
-    if not full_text:
+
+def get_filing_text(filing_obj, max_chars: int = 35_000) -> str:
+    """Get MD&A section of a 10-K (used by FinancialAgent)."""
+    text = _get_full_text(filing_obj)
+    if not text:
         return ""
+    return _slice_at_marker(
+        text,
+        ["Management's Discussion and Analysis",
+         "MANAGEMENT'S DISCUSSION AND ANALYSIS",
+         "Item 7.", "ITEM 7.",
+         "Results of Operations"],
+        max_chars,
+    )
 
-    # Common MD&A heading variations in 10-Ks
-    mda_markers = [
-        "Management's Discussion and Analysis",
-        "MANAGEMENT'S DISCUSSION AND ANALYSIS",
-        "Item 7.",
-        "ITEM 7.",
-        "Results of Operations",
-        "RESULTS OF OPERATIONS",
-    ]
 
-    for marker in mda_markers:
-        idx = full_text.find(marker)
-        if idx > 0:
-            # Found MD&A — slice from here forward
-            sliced = full_text[idx : idx + max_chars]
-            logger.info(f"  Found '{marker}' at offset {idx}, slicing {len(sliced)} chars")
-            return sliced
+def get_business_section(filing_obj, max_chars: int = 25_000) -> str:
+    """Get Item 1 (Business) of a 10-K — for CommercialAgent."""
+    text = _get_full_text(filing_obj)
+    if not text:
+        return ""
+    return _slice_at_marker(
+        text,
+        ["Item 1.", "ITEM 1.", "Business Overview", "BUSINESS"],
+        max_chars,
+    )
 
-    # Fallback: just return the first chunk
-    logger.info(f"  No MD&A marker found, returning first {max_chars} chars")
-    return full_text[:max_chars]
+
+def get_risk_factors(filing_obj, max_chars: int = 25_000) -> str:
+    """Get Item 1A (Risk Factors) of a 10-K — for RiskAgent."""
+    text = _get_full_text(filing_obj)
+    if not text:
+        return ""
+    return _slice_at_marker(
+        text,
+        ["Item 1A.", "ITEM 1A.", "Risk Factors", "RISK FACTORS"],
+        max_chars,
+    )
+
+
+def get_proxy_text(filing_obj, max_chars: int = 25_000) -> str:
+    """Get text from a DEF 14A proxy — for GovernanceAgent."""
+    text = _get_full_text(filing_obj)
+    if not text:
+        return ""
+    # Proxies don't have standard items; just return the first chunk
+    return text[:max_chars]
+
+
+def get_recent_8k_text(filings_8k_list, max_chars: int = 20_000) -> str:
+    """Concatenate text from recent 8-Ks — for RedFlagAgent."""
+    if not filings_8k_list:
+        return ""
+    chunks = []
+    remaining = max_chars
+    for f in filings_8k_list[:5]:  # cap at 5 most recent
+        if remaining <= 1000:
+            break
+        try:
+            t = f.text() if hasattr(f, "text") else str(f)
+            t_short = t[: min(4_000, remaining)]
+            # Try to grab filing date if available
+            date = getattr(f, "filing_date", "") or getattr(f, "date", "")
+            chunks.append(f"=== 8-K filed {date} ===\n{t_short}\n")
+            remaining -= len(t_short) + 100
+        except Exception:
+            continue
+    return "\n".join(chunks)
