@@ -14,7 +14,7 @@ MODEL_PRO = "llama-3.3-70b-versatile"    # same on free tier; could switch to a 
 
 # Approx context window: 128K tokens. To stay safe, cap user content at ~80K chars
 # (rough conversion: 4 chars per token => 80K chars ≈ 20K tokens).
-MAX_INPUT_CHARS = 80_000
+MAX_INPUT_CHARS = 40_000
 
 
 _client: AsyncGroq | None = None

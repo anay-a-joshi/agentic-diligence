@@ -1,82 +1,115 @@
-"""SEC EDGAR client — fetches 10-K, 10-Q, 8-K, DEF 14A filings using edgartools."""
+"""SEC EDGAR fetcher using edgartools."""
 from typing import Any
-import asyncio
-
-from edgar import Company, set_identity
+from edgar import set_identity, Company
 
 from app.config import settings
 from app.utils.logger import logger
 
 
-# Initialize edgartools with the SEC-required User-Agent identity
-_identity_set = False
-
-
 def _ensure_identity():
-    """SEC requires a User-Agent identifying the requester. Set once."""
-    global _identity_set
-    if not _identity_set:
-        set_identity(settings.sec_user_agent)
-        _identity_set = True
+    """edgartools requires identity for SEC compliance."""
+    set_identity(settings.sec_user_agent)
 
 
-def _fetch_sync(ticker: str) -> dict[str, Any]:
-    """Blocking SEC fetch — wrapped in a thread for async use."""
+def fetch_company_filings(ticker: str) -> dict[str, Any]:
+    """Fetch the most recent filings for a public company.
+
+    Returns a dict with:
+      - company_name
+      - cik
+      - filings_summary (counts by form type)
+      - _latest_10k_obj  (edgar Filing object, used by FinancialAgent)
+      - _latest_10q_obj
+      - _latest_def14a_obj
+      - recent_8k_objs (list)
+    """
     _ensure_identity()
 
-    logger.info(f"📥 Fetching SEC filings for {ticker}")
-    company = Company(ticker)
+    try:
+        company = Company(ticker)
+    except Exception as e:
+        logger.error(f"Could not resolve ticker {ticker}: {e}")
+        raise
 
-    # Pull recent filings
-    filings_10k = company.get_filings(form="10-K").head(3)  # last 3 annuals
-    filings_10q = company.get_filings(form="10-Q").head(4)  # last 4 quarters
-    filings_8k = company.get_filings(form="8-K").head(10)   # last 10 material events
-    filings_def14a = company.get_filings(form="DEF 14A").head(2)  # last 2 proxies
+    company_name = company.name
+    cik = str(company.cik)
 
-    def _serialize(filings) -> list[dict]:
-        results = []
-        for f in filings:
-            try:
-                results.append({
-                    "form": f.form,
-                    "filing_date": str(f.filing_date),
-                    "accession_number": f.accession_no,
-                    "url": f.homepage_url if hasattr(f, "homepage_url") else "",
-                })
-            except Exception as e:
-                logger.warning(f"Could not serialize filing: {e}")
-        return results
+    filings_10k = company.get_filings(form="10-K").head(3)
+    filings_10q = company.get_filings(form="10-Q").head(4)
+    filings_8k = company.get_filings(form="8-K").head(10)
+    filings_def14a = company.get_filings(form="DEF 14A").head(2)
 
     return {
-        "ticker": ticker,
-        "company_name": company.name if hasattr(company, "name") else ticker,
-        "cik": str(company.cik) if hasattr(company, "cik") else "",
-        "10K": _serialize(filings_10k),
-        "10Q": _serialize(filings_10q),
-        "8K": _serialize(filings_8k),
-        "DEF14A": _serialize(filings_def14a),
-        # Also keep the latest 10-K filing object for deep extraction by agents
+        "company_name": company_name,
+        "cik": cik,
+        "filings_summary": {
+            "10K": len(filings_10k),
+            "10Q": len(filings_10q),
+            "8K": len(filings_8k),
+            "DEF14A": len(filings_def14a),
+        },
         "_latest_10k_obj": filings_10k[0] if len(filings_10k) > 0 else None,
         "_latest_10q_obj": filings_10q[0] if len(filings_10q) > 0 else None,
+        "_latest_def14a_obj": filings_def14a[0] if len(filings_def14a) > 0 else None,
+        "recent_8k_objs": list(filings_8k) if len(filings_8k) > 0 else [],
     }
 
 
-async def fetch_company_filings(ticker: str) -> dict[str, Any]:
-    """Async wrapper around the blocking SEC client."""
-    return await asyncio.to_thread(_fetch_sync, ticker)
+def get_filing_text(filing_obj, max_chars: int = 35_000) -> str:
+    """Extract plain text from a filing object, capped at max_chars.
 
-
-def get_filing_text(filing_obj, max_chars: int = 200_000) -> str:
-    """
-    Extract the textual content of a filing for LLM consumption.
-    Truncates to max_chars to stay within Gemini's free-tier context budget.
+    Tries to grab the most financially-dense section first (MD&A or
+    financial statements) before falling back to raw text.
     """
     if filing_obj is None:
         return ""
+
+    # Strategy 1: Try to extract specific 10-K items via the Filing.obj() Form10K helper
     try:
-        # edgartools exposes .text() on filings
-        text = filing_obj.text() if hasattr(filing_obj, "text") else str(filing_obj)
-        return text[:max_chars]
+        form_obj = filing_obj.obj()
+        # edgartools Form10K exposes named items
+        # Item 7 = MD&A (revenue discussion), Item 8 = Financial Statements
+        for item_name in ["Item 7", "Item 7A", "Item 8"]:
+            try:
+                item_text = getattr(form_obj, item_name.replace(" ", "_").lower(), None)
+                if item_text:
+                    text = str(item_text)
+                    if len(text) > 1000:  # sanity check
+                        logger.info(f"  Got {item_name} via Form10K helper ({len(text)} chars)")
+                        return text[:max_chars]
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Strategy 2: Search raw text for MD&A heading and slice from there
+    try:
+        full_text = filing_obj.text() if hasattr(filing_obj, "text") else str(filing_obj)
     except Exception as e:
-        logger.warning(f"Could not extract filing text: {e}")
+        logger.warning(f"  Could not get filing text: {e}")
         return ""
+
+    if not full_text:
+        return ""
+
+    # Common MD&A heading variations in 10-Ks
+    mda_markers = [
+        "Management's Discussion and Analysis",
+        "MANAGEMENT'S DISCUSSION AND ANALYSIS",
+        "Item 7.",
+        "ITEM 7.",
+        "Results of Operations",
+        "RESULTS OF OPERATIONS",
+    ]
+
+    for marker in mda_markers:
+        idx = full_text.find(marker)
+        if idx > 0:
+            # Found MD&A — slice from here forward
+            sliced = full_text[idx : idx + max_chars]
+            logger.info(f"  Found '{marker}' at offset {idx}, slicing {len(sliced)} chars")
+            return sliced
+
+    # Fallback: just return the first chunk
+    logger.info(f"  No MD&A marker found, returning first {max_chars} chars")
+    return full_text[:max_chars]

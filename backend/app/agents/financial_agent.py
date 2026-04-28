@@ -7,34 +7,43 @@ from app.services.sec_edgar import get_filing_text
 
 
 SYSTEM_PROMPT = """You are a senior financial analyst at a top-tier private equity firm.
-You read SEC 10-K filings and extract clean, structured financial data for use in LBO modeling.
-You are precise. You only return what is explicitly stated in the filing.
-If a value is unclear or not stated, return null for that field rather than guessing."""
+You read SEC 10-K filings and extract precise, structured financial data for LBO modeling.
+
+CRITICAL RULES:
+1. Extract every number you can find. Look for revenue, net sales, EBITDA, operating income,
+   net income, cash flow from operations, capital expenditures, total debt, cash & equivalents.
+2. Numbers in 10-Ks are usually stated in millions. Convert any thousands or billions accordingly.
+3. If you find revenue but not EBITDA explicitly, calculate EBITDA = Operating Income + D&A
+   when both are available.
+4. Free Cash Flow = Cash from Operations - CapEx (when both are available).
+5. ALWAYS return a list (possibly empty) for key_drivers, key_risks, non_recurring_items.
+   Never return null for those fields - return [] if you have nothing.
+6. Use null ONLY for numerical fields you genuinely cannot determine."""
 
 
-USER_PROMPT_TEMPLATE = """Analyze the following 10-K filing for {ticker} and extract the most recent fiscal year's key financial data.
+USER_PROMPT_TEMPLATE = """This is the most recent 10-K filing for {ticker}. Extract financial data.
 
-Return ONLY a JSON object with this exact shape:
+Return ONLY a JSON object:
 {{
-  "fiscal_year": 2024,
-  "revenue_usd_millions": 391035,
-  "ebitda_usd_millions": 130000,
-  "net_income_usd_millions": 96995,
-  "free_cash_flow_usd_millions": 108807,
-  "total_debt_usd_millions": 106629,
-  "cash_and_equivalents_usd_millions": 65171,
-  "shares_outstanding_millions": 15116,
-  "revenue_growth_yoy_pct": 2.0,
-  "ebitda_margin_pct": 33.2,
-  "key_drivers": ["Services revenue growth", "iPhone unit pricing"],
-  "key_risks": ["China demand softness", "Regulatory pressure on App Store"],
-  "non_recurring_items": ["1.2B litigation reserve in Q3"],
-  "summary": "A 2-3 sentence summary of financial health and trajectory."
+  "fiscal_year": <int>,
+  "revenue_usd_millions": <number or null>,
+  "ebitda_usd_millions": <number or null>,
+  "net_income_usd_millions": <number or null>,
+  "free_cash_flow_usd_millions": <number or null>,
+  "total_debt_usd_millions": <number or null>,
+  "cash_and_equivalents_usd_millions": <number or null>,
+  "shares_outstanding_millions": <number or null>,
+  "revenue_growth_yoy_pct": <number or null>,
+  "ebitda_margin_pct": <number or null>,
+  "key_drivers": [<string>, ...],
+  "key_risks": [<string>, ...],
+  "non_recurring_items": [<string>, ...],
+  "summary": "<2-3 sentence summary>"
 }}
 
-Use null for any value you cannot determine. Numbers in USD millions.
+For list fields, use [] if you have nothing — DO NOT use null.
 
-10-K excerpt:
+10-K excerpt (focus on revenue, operating income, cash flow):
 ---
 {filing_text}
 ---"""
@@ -48,14 +57,15 @@ class FinancialAgent(BaseAgent):
 
         filing_obj = self.filings.get("_latest_10k_obj")
         if filing_obj is None:
-            self.log("No 10-K available — returning empty result")
+            self.log("No 10-K available")
             return {"status": "no_filing", "data": None}
 
-        # Groq has a 128K context limit; truncate to 70K chars to leave room for prompt + response
-        filing_text = get_filing_text(filing_obj, max_chars=70_000)
+        filing_text = get_filing_text(filing_obj, max_chars=35_000)
         if not filing_text:
             self.log("Could not extract filing text")
             return {"status": "no_text", "data": None}
+
+        self.log(f"Filing text: {len(filing_text)} chars")
 
         prompt = USER_PROMPT_TEMPLATE.format(
             ticker=self.ticker,
@@ -68,8 +78,9 @@ class FinancialAgent(BaseAgent):
                 system=SYSTEM_PROMPT,
                 model=MODEL_FLASH,
             )
-            self.log(f"Extracted: revenue=${data.get('revenue_usd_millions')}M, "
-                     f"EBITDA=${data.get('ebitda_usd_millions')}M")
+            rev = data.get("revenue_usd_millions")
+            ebitda = data.get("ebitda_usd_millions")
+            self.log(f"Extracted: revenue=${rev}M, EBITDA=${ebitda}M")
             return {"status": "ok", "data": data}
         except Exception as e:
             self.log(f"LLM call failed: {e}")
