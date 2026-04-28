@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "DiligenceAI — Agentic Take-Private Screening",
-  description: "Compress PE due diligence from weeks to hours.",
+  title: "DiligenceAI — Take-Private Screening, Reimagined",
+  description: "Eight specialist AI agents. Two minutes. Investment-grade output.",
 };
 
 export default function RootLayout({
@@ -12,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" className="dark">
+      <body className={inter.variable}>{children}</body>
     </html>
   );
 }

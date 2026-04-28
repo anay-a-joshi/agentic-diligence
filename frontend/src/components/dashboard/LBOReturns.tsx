@@ -7,43 +7,105 @@ export default function LBOReturns({ result }: { result: AnalysisResult }) {
   if (!lbo || lbo.status !== "ok" || !lbo.base) return null;
 
   const scenarios = [
-    { name: "Bull", color: "bg-green-50 border-green-200", scenario: lbo.bull },
-    { name: "Base", color: "bg-amber-50 border-amber-200", scenario: lbo.base },
-    { name: "Bear", color: "bg-red-50 border-red-200", scenario: lbo.bear },
+    { name: "Bull", scenario: lbo.bull, color: "#10b981", glow: "glow-green" },
+    { name: "Base", scenario: lbo.base, color: "#f59e0b", glow: "glow-amber" },
+    { name: "Bear", scenario: lbo.bear, color: "#ef4444", glow: "glow-red" },
   ];
 
   return (
-    <div>
-      <h2 className="text-2xl font-bold text-slate-900 mb-4">LBO Returns</h2>
+    <section>
+      <div className="mb-6">
+        <div className="text-xs uppercase tracking-widest text-slate-500 mb-1 font-medium">
+          Section 03
+        </div>
+        <h2 className="text-3xl font-bold text-white tracking-tight">
+          LBO Returns
+        </h2>
+      </div>
+
       {lbo.size_prohibitive && (
-        <div className="mb-4 px-4 py-3 rounded-xl bg-amber-50 border border-amber-300 text-sm text-amber-900">
-          <strong>Size Note:</strong> {lbo.size_prohibitive_note}
+        <div className="mb-6 glass rounded-xl px-5 py-4 border border-amber-500/20 flex items-start gap-3 animate-fade-up">
+          <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <div className="text-amber-300 font-semibold text-sm mb-1">Size-Prohibitive Deal</div>
+            <div className="text-slate-300 text-sm">{lbo.size_prohibitive_note}</div>
+          </div>
         </div>
       )}
+
       <div className="grid md:grid-cols-3 gap-4">
-        {scenarios.map(({ name, color, scenario }) => {
+        {scenarios.map(({ name, scenario, color, glow }, i) => {
           if (!scenario) return null;
           const irr = scenario.returns.irr_pct;
           const moic = scenario.returns.moic;
           const exit_eq = scenario.exit.exit_equity_value_usd_millions;
+          const irrIsGood = irr >= 15;
+
           return (
-            <div key={name} className={`rounded-2xl border-2 ${color} p-6`}>
-              <div className="text-sm font-semibold uppercase tracking-wider text-slate-600 mb-3">
-                {name} Case
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-xs text-slate-500">IRR (5-year)</div>
-                  <div className="text-3xl font-bold text-slate-900 tabular-nums">{irr.toFixed(1)}%</div>
+            <div
+              key={name}
+              className={`glass-strong rounded-2xl p-6 ${glow} animate-fade-up relative overflow-hidden`}
+              style={{ animationDelay: `${i * 100}ms` }}
+            >
+              <div
+                className="absolute top-0 right-0 w-40 h-40 rounded-full opacity-30"
+                style={{
+                  background: `radial-gradient(circle, ${color}40 0%, transparent 60%)`,
+                  filter: "blur(30px)",
+                  transform: "translate(40%, -40%)",
+                }}
+              />
+
+              <div className="relative">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="text-xs uppercase tracking-widest font-bold" style={{ color }}>
+                    {name} Case
+                  </div>
+                  <div
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tabular-nums"
+                    style={{
+                      background: `${color}20`,
+                      color: color,
+                    }}
+                  >
+                    5y hold
+                  </div>
                 </div>
-                <div>
-                  <div className="text-xs text-slate-500">MOIC</div>
-                  <div className="text-2xl font-bold text-slate-900 tabular-nums">{moic.toFixed(2)}x</div>
+
+                <div className="mb-6">
+                  <div className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">
+                    IRR
+                  </div>
+                  <div
+                    className="text-5xl font-bold tabular-nums"
+                    style={{ color }}
+                  >
+                    {irr > 0 ? "+" : ""}{irr.toFixed(1)}%
+                  </div>
                 </div>
-                <div>
-                  <div className="text-xs text-slate-500">Exit Equity</div>
-                  <div className="text-lg font-semibold text-slate-700 tabular-nums">
-                    ${(exit_eq / 1000).toFixed(1)}B
+
+                <div className="grid grid-cols-2 gap-3 pt-5 border-t border-white/5">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">
+                      MOIC
+                    </div>
+                    <div className="text-xl font-bold tabular-nums text-white">
+                      {moic.toFixed(2)}x
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-slate-500 font-medium mb-1">
+                      Exit Equity
+                    </div>
+                    <div className="text-xl font-bold tabular-nums text-white">
+                      ${(exit_eq / 1000).toFixed(1)}B
+                    </div>
                   </div>
                 </div>
               </div>
@@ -51,6 +113,6 @@ export default function LBOReturns({ result }: { result: AnalysisResult }) {
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
