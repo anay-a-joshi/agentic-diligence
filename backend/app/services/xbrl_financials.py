@@ -1,7 +1,9 @@
 """Fetches structured financial data from SEC's XBRL API.
 
-This is the official SEC endpoint that exposes machine-readable financial
-data extracted from every 10-K/10-Q. No scraping, no parsing — clean numbers.
+Companies change their reporting concepts over time (e.g. Apple moved from
+'Revenues' in 2018 to 'RevenueFromContractWithCustomerExcludingAssessedTax'
+in 2019+). For each field, we scan ALL aliases and pick the entry with the
+LATEST end date globally — never stale data.
 """
 import httpx
 
@@ -17,14 +19,13 @@ def _cik_padded(cik: str) -> str:
     return str(cik).zfill(10)
 
 
-# Map our financial fields → XBRL US-GAAP concepts (in priority order)
-# Companies use slightly different concepts; we try multiple
+# Map our financial fields → ordered list of XBRL US-GAAP concepts (most-modern first)
 CONCEPT_MAP = {
     "revenue_usd_millions": [
-        "Revenues",
         "RevenueFromContractWithCustomerExcludingAssessedTax",
-        "SalesRevenueNet",
         "RevenueFromContractWithCustomerIncludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
     ],
     "net_income_usd_millions": [
         "NetIncomeLoss",
@@ -61,50 +62,52 @@ CONCEPT_MAP = {
 
 
 def _latest_annual_value(facts: dict, concept_aliases: list[str]) -> tuple[float | None, int | None]:
-    """Find the most recent annual (FY) value for a concept.
+    """Find the truly most-recent annual value across ALL concept aliases.
 
-    Returns (value_in_millions, fiscal_year) or (None, None) if not found.
+    Iterates every alias, every USD/shares unit, every annual data point,
+    and picks the one with the latest `end` date globally.
+    Returns (value_in_millions, fiscal_year) or (None, None).
     """
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
+
+    candidates: list[tuple[str, float, int | None, str]] = []  # (end_date, val, fy, unit)
 
     for concept in concept_aliases:
         entry = us_gaap.get(concept)
         if not entry:
             continue
         units = entry.get("units", {})
-        # Prefer USD; fall back to shares for share counts
-        for unit_key in ("USD", "USD/shares", "shares"):
-            data_points = units.get(unit_key, [])
-            if not data_points:
+        for unit_key, data_points in units.items():
+            if unit_key not in ("USD", "shares"):
                 continue
-            # Filter to annual filings (form="10-K", fp="FY")
-            annual = [
-                dp for dp in data_points
-                if dp.get("form") == "10-K" and dp.get("fp") == "FY"
-            ]
-            if not annual:
-                continue
-            # Pick the most recent by 'end' date
-            latest = max(annual, key=lambda d: d.get("end", ""))
-            val = latest.get("val")
-            fy = latest.get("fy")
-            if val is None:
-                continue
-            # Convert to millions for monetary values; leave shares alone if shares-unit
-            if unit_key == "USD":
-                return (val / 1_000_000.0, fy)
-            elif unit_key == "shares":
-                return (val / 1_000_000.0, fy)  # shares in millions too
-            else:
-                return (val, fy)
-    return (None, None)
+            for dp in data_points:
+                # We want full-year annual data: form 10-K and fp FY
+                if dp.get("form") != "10-K" or dp.get("fp") != "FY":
+                    continue
+                val = dp.get("val")
+                end = dp.get("end", "")
+                fy = dp.get("fy")
+                if val is None or not end:
+                    continue
+                candidates.append((end, val, fy, unit_key))
+
+    if not candidates:
+        return (None, None)
+
+    # Pick the one with the latest end date
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    latest_end, latest_val, latest_fy, latest_unit = candidates[0]
+
+    # Convert to millions
+    val_millions = latest_val / 1_000_000.0
+    return (val_millions, latest_fy)
 
 
 def fetch_structured_financials(cik: str) -> dict:
     """Fetch structured financials from SEC XBRL API.
 
     Returns a dict matching the FinancialData schema (numeric fields only).
-    Does NOT include LLM-generated fields (drivers, risks, summary).
+    Always returns the freshest annual data available.
     """
     cik_padded = _cik_padded(cik)
     url = f"{XBRL_BASE}/CIK{cik_padded}.json"
@@ -121,26 +124,25 @@ def fetch_structured_financials(cik: str) -> dict:
         return {}
 
     out: dict = {}
-    fiscal_year_seen: int | None = None
+    fiscal_years_seen: list[int] = []
 
     for field, aliases in CONCEPT_MAP.items():
         val, fy = _latest_annual_value(facts, aliases)
         if val is not None:
-            # Round to integer for millions (cleaner for display/IC memo)
             out[field] = round(val)
-            if fiscal_year_seen is None and fy is not None:
-                fiscal_year_seen = fy
+            if fy is not None:
+                fiscal_years_seen.append(fy)
 
-    if fiscal_year_seen:
-        out["fiscal_year"] = fiscal_year_seen
+    # Use the most-recent fiscal year across all extracted fields
+    if fiscal_years_seen:
+        out["fiscal_year"] = max(fiscal_years_seen)
 
-    # Derive EBITDA if we have op income + D&A
+    # Derive EBITDA = Operating Income + D&A
     op_inc = out.pop("operating_income_usd_millions", None)
     da = out.pop("depreciation_amortization_usd_millions", None)
     if op_inc is not None and da is not None:
         out["ebitda_usd_millions"] = round(op_inc + da)
     elif op_inc is not None:
-        # If no D&A available, EBITDA approximation is op income
         out["ebitda_usd_millions"] = op_inc
 
     # Derive FCF = CFO - CapEx
@@ -158,6 +160,8 @@ def fetch_structured_financials(cik: str) -> dict:
         out["ebitda_margin_pct"] = round(ebitda / rev * 100, 1)
 
     logger.info(f"  XBRL extracted: revenue=${out.get('revenue_usd_millions')}M, "
-                f"EBITDA=${out.get('ebitda_usd_millions')}M, FY={out.get('fiscal_year')}")
+                f"EBITDA=${out.get('ebitda_usd_millions')}M, "
+                f"FCF=${out.get('free_cash_flow_usd_millions')}M, "
+                f"FY={out.get('fiscal_year')}")
 
     return out
